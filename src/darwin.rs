@@ -138,34 +138,26 @@ impl DarwinRebuildArgs {
                 .dry(self.common.dry)
                 .run()?;
 
+            let darwin_rebuild = out_path.get_path().join("sw/bin/darwin-rebuild");
             let activate_user = out_path.get_path().join("activate-user");
 
-            let user_activation = Command::new(activate_user.clone())
-                .message("Activating configuration for user")
-                .dry(self.common.dry);
+            // Determine if we need to elevate privileges
+            let needs_elevation = !activate_user.exists()
+                || std::fs::read_to_string(&activate_user)
+                    .context("Failed to read activate-user file")?
+                    .contains("# nix-darwin: deprecated");
 
-            let activate = out_path.get_path().join("activate");
-
-            let activation = Command::new(activate)
-                .elevate(true)
+            // Create and run the activation command with or without elevation
+            let mut activation = Command::new(darwin_rebuild)
+                .arg("activate")
                 .message("Activating configuration")
                 .dry(self.common.dry);
 
-            if activate_user.exists() {
-                // Check whether activate-user is deprecated
-                // If it is, only activate with root
-                if std::fs::read_to_string(&activate_user)
-                    .context("Failed to read activate-user file")?
-                    .contains("# nix-darwin: deprecated")
-                {
-                    activation.run()?;
-                } else {
-                    user_activation.run()?;
-                    activation.run()?;
-                }
-            } else {
-                activation.run()?;
+            if needs_elevation {
+                activation = activation.elevate(true);
             }
+
+            activation.run()?;
         }
 
         // Make sure out_path is not accidentally dropped
